@@ -1,33 +1,89 @@
 #[macro_export]
 macro_rules! synchronize {
     ([$mutex1:expr], $closure:expr) => {
+        let guard = REGION_MANAGER.lock().unwrap();
+
+        // Region Checks
+        synchronize!(@REGION_CHECK, guard, $mutex1);
+
+        drop(guard);
+
+        // Acquire JMutex
         let guard1 = $mutex1.lock().unwrap();
 
+        // Call closure
         $closure(guard1);
     };
 
 
     ([$mutex1:expr, $mutex2:expr], $closure:expr) => {
-        drop($mutex2.lock());
+        let mut guard = REGION_MANAGER.lock().unwrap();
+        
+        // Region Checks
+        synchronize!(@REGION_CHECK, guard, $mutex1);
+        synchronize!(@REGION_CHECK, guard, $mutex2);
+        
+        // Handle relations
+        synchronize!(@HANDLE_RELATION, guard, $mutex1, $mutex2);
 
+        drop(guard);
+
+        // Prelocking
+        synchronize!(@PRELOCK, $mutex2);
+
+        // Acquire JMutex
         let guard1 = $mutex1.lock().unwrap();
 
+        // Call closure
         $closure(guard1, $mutex2);
     };
 
     ([$mutex1:expr, $mutex2:expr, $mutex3:expr], $closure:expr) => {
-        drop($mutex2.lock());
-        drop($mutex3.lock());
+        let mut guard = REGION_MANAGER.lock().unwrap();
 
+        // Region Checks
+        synchronize!(@REGION_CHECK, guard, $mutex1);
+        synchronize!(@REGION_CHECK, guard, $mutex2);
+        synchronize!(@REGION_CHECK, guard, $mutex3);
+        
+        // Handle relations
+        synchronize!(@HANDLE_RELATION, guard, $mutex1, $mutex2);
+        synchronize!(@HANDLE_RELATION, guard, $mutex1, $mutex3);
+
+        drop(guard);
+
+        // Prelocking
+        synchronize!(@PRELOCK, $mutex2);
+        synchronize!(@PRELOCK, $mutex3);
+
+        // Acquire JMutex
         let guard1 = $mutex1.lock().unwrap();
 
+        // Call closure
         $closure(guard1, $mutex2, $mutex3);
     };
+
+    (@PRELOCK, $mutex:expr) => {
+        drop($mutex.lock().unwrap());
+    };
+
+    (@REGION_CHECK, $guard:expr, $mutex:expr) => {
+        let region_check = $guard.check_region($mutex.lock_id());
+
+        if !region_check {
+            panic!("Lock does not belong to the region");
+        }
+    };
+
+    (@HANDLE_RELATION, $guard:expr, $mutex1:expr, $mutex2:expr) => {
+        $guard.handle_relation($mutex1.lock_id(), $mutex2.lock_id());
+    }
 }
 
 
 #[cfg(test)]
-mod tests {
+mod synchronize {
+    use crate::REGION_MANAGER;
     use crate::JMutex;
 
     #[test]
