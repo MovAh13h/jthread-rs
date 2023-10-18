@@ -40,7 +40,7 @@ impl Region {
 				};
 
 				match ord {
-					Ordering::Greater => return Some(true),
+					Ordering::Equal => return Some(true),
 					_ => return Some(false),
 				}
 			}
