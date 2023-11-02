@@ -1,5 +1,3 @@
-use crate::RR;
-
 #[macro_export]
 macro_rules! sync {
     ([$mutex1:expr], $closure:expr) => {
@@ -65,12 +63,12 @@ macro_rules! sync {
 
 #[cfg(test)]
 mod sync {
-    use crate::RR;
+    use crate::region::RR;
     use crate::JMutex;
 
     #[test]
     fn one_lock() {
-        let mut m1 = JMutex::new(String::from("1"));
+        let mut m1 = JMutex::new(String::from("1"), None);
 
         sync!([m1], |s| {
             println!("{}", s);
@@ -79,8 +77,8 @@ mod sync {
 
     #[test]
     fn two_lock() {
-        let mut m1 = JMutex::new(String::from("1"));
-        let mut m2 = JMutex::new(String::from("2"));
+        let mut m1 = JMutex::new(String::from("1"), None);
+        let mut m2 = JMutex::new(String::from("2"), None);
 
         sync!([m1, m2], |s, mut m2: JMutex<String>| {
             println!("{}", s);
@@ -92,9 +90,9 @@ mod sync {
 
     #[test]
     fn three_lock() {
-        let mut m1 = JMutex::new(String::from("1"));
-        let mut m2 = JMutex::new(String::from("2"));
-        let mut m3 = JMutex::new(String::from("3"));
+        let mut m1 = JMutex::new(String::from("1"), None);
+        let mut m2 = JMutex::new(String::from("2"), None);
+        let mut m3 = JMutex::new(String::from("3"), None);
 
         sync!([m1, m2, m3], |s, mut m2: JMutex<String>, mut m3: JMutex<String>| {
             println!("{}", s);
