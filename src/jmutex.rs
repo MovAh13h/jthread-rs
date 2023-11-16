@@ -1,79 +1,58 @@
-use std::fmt::Debug;
-use std::fmt::Formatter;
-use std::fmt::Error;
-use std::sync::{Arc, Mutex, MutexGuard, LockResult};
+use crate::RegionId;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::fmt;
+use std::sync::{Mutex, LockResult, MutexGuard, Arc};
 
 use crate::Region;
-use crate::region::RegionId;
 
-pub (crate) type LockId = u128;
+
+pub (crate) type LockId = u64;
 
 pub struct JMutex<D> {
-	inner: Arc<Mutex<D>>,
-	region: Arc<Region>,
-	lid: LockId
+	inner: Mutex<D>,
+	lid: LockId,
+	rgn: RegionId
 }
 
 impl<D> JMutex<D> {
-	pub fn new(data: D, or: Option<Arc<Region>>) -> Self {
-		let (arc_rgn, lid) = match or {
+	pub fn new(data: D, or: Option<Region>) -> Self {
+		let (rgn, lid): (i32, i32) = match or {
 			Some(r) => {
-				let lid = Region::generate_lock_id(&r);
-				(r, lid)
-			},
+				
+				todo!()
+			}
 
-			None => (Region::new(), LockId::MIN)
+			None => {
+				
+				todo!()
+			}
 		};
 
-		Self {
-			inner: Arc::new(Mutex::new(data)),
-			lid,
-			region: arc_rgn,
-		}
+
+		todo!()
 	}
 
 	pub fn lock(&mut self) -> LockResult<MutexGuard<D>> {
 		self.inner.lock()
 	}
 
-	#[allow(dead_code)]
-	pub (crate) fn region_id(&self) -> RegionId {
-		self.region.id()
+	pub (crate) fn generate_lock_id() -> LockId {
+		let result = LOCK_ID.load(Ordering::SeqCst).into();
+
+		LOCK_ID.fetch_add(1, Ordering::SeqCst);
+
+		result
 	}
 }
 
-impl<D> Debug for JMutex<D> {
-	fn fmt(&self, w: &mut Formatter<'_>) -> Result<(), Error> {
+impl<D> fmt::Debug for JMutex<D> {
+	fn fmt(&self, w: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
 		w.debug_struct("JMutex")
 			.field("LockId", &self.lid)
-			.field("RegionId", &self.region)
+			.field("RegionId", &self.rgn)
 			.finish()
 	}
 }
 
-#[cfg(test)]
-mod tests {
-	use std::thread;
-
-	use super::*;
-
-	#[test]
-	fn lock() {
-		let mut m = JMutex::new(String::from("1"), None);
-		println!("{:?}", m);
-
-		let guard = m.lock().unwrap();
-		println!("{}", guard);
-	}
-
-	#[test]
-	fn debug() {
-		let m1 = JMutex::new(String::from("1"), None);
-		println!("{:?}", m1);
-
-		thread::spawn(move || {
-			let m2 = JMutex::new(String::from("2"), None);
-			println!("{:?}", m2);			
-		});
-	}
-}
+// Unique Region ID
+static LOCK_ID: AtomicU64 = AtomicU64::new(0);
