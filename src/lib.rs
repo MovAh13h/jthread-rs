@@ -210,6 +210,10 @@ impl LocalRegions {
 	fn can_lock(&self, region: &Region) -> bool {
 		let current_active_region = self.0.last().unwrap();
 
+		if current_active_region.region().id() == region.id() {
+			return true;
+		}
+
 		let ro = REGION_ORDERING.lock().unwrap();
 		// TODO: Check ordering
 		let result = ro.check_relation(current_active_region.region().id(), region.id());
@@ -282,13 +286,9 @@ impl LocalRegions {
 		if removal {
 			match iter.position(|x| { x.region() == r }) {
 				Some(index) => {
-					println!("Index: {} | R: {:?}", index, r);
 					self.0.swap_remove(index);
 				}
-
-				None => {
-
-				}
+				_ => {}
 			}
 			
 		}
@@ -352,11 +352,6 @@ where
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
-	let rm2 = m2.region();
-
-	if rm1 != rm2 {
-		return Err(JError::UnequalRegions);
-	}
 
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
@@ -398,12 +393,6 @@ where
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
-	let rm2 = m2.region();
-	let rm3 = m3.region();
-
-	if rm1 != rm2 || rm1 != rm3 {
-		return Err(JError::UnequalRegions);
-	}
 
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
@@ -471,13 +460,15 @@ mod tests {
         fn eat(&self) {
             println!("{} is thinking.", self.name);
 
-            sync!([self.left_fork.clone(), self.right_fork.clone()], |left_fork_guard, right_fork_guard| {
-                println!("{} is eating.", self.name);
+            sync!([self.left_fork.clone(), self.right_fork.clone()], |left_fork_guard, r| {
+            	sync!([r], |g| {
+            		println!("{} is eating.", self.name);
 
-                // Simulate eating
-                thread::sleep(std::time::Duration::from_secs(1));
+	                // Simulate eating
+	                thread::sleep(std::time::Duration::from_secs(1));
 
-                println!("{} has finished eating.", self.name);
+	                println!("{} has finished eating.", self.name);
+            	});                
             }).expect("Failed to acquire forks");
 
             println!("{} is thinking again.", self.name);
@@ -486,7 +477,6 @@ mod tests {
 
     #[test]
     fn dining_philosophers() {
-
     	let r = Region::new();
 
         // Initialize forks
@@ -517,4 +507,75 @@ mod tests {
             handle.join().expect("Philosopher thread panicked");
         }
     }
+
+    #[test]
+	fn test_deadlock_prevention() {
+		let r = Region::new();
+	    let mutex1 = JMutex::new(1, r.clone());
+	    let mutex2 = JMutex::new(2, r.clone());
+
+	    let m1_clone = mutex1.clone();
+	    let m2_clone = mutex2.clone();
+
+	    let handle1 = thread::spawn(move || {
+	        sync!([m1_clone, m2_clone], |_guard1, m2| {
+	            sync!([m2], |m2g| {
+	            	// Use locks
+	            });
+	        }).expect("Failed to acquire locks");
+	    });
+
+	    let handle2 = thread::spawn(move || {
+	        sync!([mutex2, mutex1], |guard2, m1| {
+	            sync!([m1], |m1g| {
+	            	// Use locks
+	            });
+	        }).expect("Failed to acquire locks");
+	    });
+
+	    handle1.join().expect("Thread 1 panicked");
+	    handle2.join().expect("Thread 2 panicked");
+	}
+
+	#[test]
+	fn test_concurrent_access() {
+		let r = Region::new();
+	    let shared_data = JMutex::new(vec![1, 2, 3], r);
+	    let mut handles = vec![];
+
+	    for _ in 0..10 {
+	        let data_clone = shared_data.clone();
+	        handles.push(thread::spawn(move || {
+	            let result = sync!([data_clone], |guard| {
+	                guard.iter().sum::<i32>()
+	            });
+	            assert_eq!(result.expect("Failed to lock"), 6);
+	        }));
+	    }
+
+	    for handle in handles {
+	        handle.join().expect("Thread panicked");
+	    }
+	}
+
+	#[test]
+	fn test_different_regions() {
+		let r1 = Region::new();
+		let r2 = Region::new();
+
+		let m1 = JMutex::new(1, r1);
+		let m2 = JMutex::new(2, r2);
+
+		sync!([m1.clone(), m2.clone()], |g1, m2| {
+			sync!([m2], |g2| {
+				// Use locks
+			});
+		}).expect("Failed to sync");
+
+		sync!([m2, m1], |g2, m1| {
+			sync!([m1], |g1| {
+				// Use locks
+			});
+		}).expect("Failed to sync");
+	}
 }
