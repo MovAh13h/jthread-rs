@@ -1,76 +1,87 @@
+// Imports
+
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread_local;
 
-use crate::jmutex::LockId;
+use crate::LockId;
 
-use lazy_static::lazy_static;
-use tord::Tord;
+// Types
 
 pub (crate) type RegionId = u128;
-type RegionManager = RefCell<Vec<(Arc<Region>, Vec<LockId>, LockId)>>;
+pub (crate) type RegionManager = RefCell<Vec<(Region, Vec<LockId>)>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Region(RegionId);
 
 impl Region {
-	pub fn new() -> Arc<Self> {
-		// Create a Region and Arcs
-		let r = Self(Self::generate_region_id());
-		let ar = Arc::new(r);
-		let arc = Arc::clone(&ar);
+	pub fn new() -> Self {
+		let result = Self(REGION_ID.load(Ordering::SeqCst).into());
 
-		// Add Region to Region manager
-		let regions_cell: RegionManager = REGIONS.take().into();
-		let mut regions = regions_cell.borrow_mut();
-		regions.push((ar, vec![], LockId::MIN));
-		REGIONS.set(regions.to_vec());
+		// Increment the REGION_ID
+		REGION_ID.fetch_add(1, Ordering::SeqCst);
 
-		arc
+		result
 	}
 
 	pub (crate) fn id(&self) -> RegionId {
 		self.0
 	}
-
-	pub (crate) fn generate_region_id() -> RegionId {
-		let mut guard = REGION_ID_COUNTER.lock().unwrap();
-		let region_id = *guard;
-		*guard += 1;
-		drop(guard);
-
-		region_id
-	}
-
-	pub (crate) fn generate_lock_id(r: &Arc<Region>) -> LockId {
-		let regions_cell: RegionManager = REGIONS.take().into();
-		let mut regions = regions_cell.borrow_mut();
-
-		match regions.iter_mut().find(|x| { x.0 == *r }) {
-			Some(e) => {
-				let lid = e.2;
-
-				e.1.push(lid);
-				e.2 += 1;
-
-				lid
-			}
-			None => panic!("Region Does not Exist")
-		}
-	}
 }
 
-impl PartialEq for Region {
-	fn eq(&self, r: &Region) -> bool {
-		self.0 == r.0
-	}
-}
-
-static REGION_ID_COUNTER: Mutex<RegionId> = Mutex::new(0);
+// Unique Region ID
+static REGION_ID: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
 	static REGIONS: RegionManager = RefCell::new(Vec::new());
 }
 
-lazy_static! {
-	pub (crate) static ref RR: Mutex<Tord<RegionId>> = Mutex::new(Tord::new());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use lazy_static::lazy_static;
+
+    // Since tests are run in parallel, we use a Mutex to ensure only one test
+    // interacts with REGION_ID at a time. This is for testing purposes only.
+    lazy_static! {
+        static ref REGION_ID_LOCK: Mutex<()> = Mutex::new(());
+    }
+
+    #[test]
+    fn new_region_has_unique_id() {
+        let _guard = REGION_ID_LOCK.lock().unwrap(); // Lock for the duration of the test
+
+        let before_id = REGION_ID.load(Ordering::SeqCst);
+        let region = Region::new();
+        let after_id = REGION_ID.load(Ordering::SeqCst);
+
+        // Ensure the ID was incremented exactly once
+        assert_eq!(before_id + 1, after_id);
+        // Ensure the region's ID matches what was loaded
+        assert_eq!(region.id(), before_id.into());
+    }
+
+    #[test]
+    fn id_method_returns_correct_value() {
+        let _guard = REGION_ID_LOCK.lock().unwrap(); // Lock for the duration of the test
+
+        let initial_id = REGION_ID.load(Ordering::SeqCst);
+        let region = Region::new();
+        let expected_id: RegionId = initial_id.into(); // Convert to RegionId type
+
+        // Ensure the region's ID is the expected value
+        assert_eq!(region.id(), expected_id);
+    }
+
+    #[test]
+    fn region_ids_are_incremental() {
+        let _guard = REGION_ID_LOCK.lock().unwrap(); // Lock for the duration of the test
+
+        let region1 = Region::new();
+        let region2 = Region::new();
+
+        // Ensure each region ID is incrementing correctly
+        assert_eq!(region2.id(), region1.id() + 1);
+    }
 }
