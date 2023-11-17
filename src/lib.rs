@@ -2,6 +2,7 @@
 
 // ----- Imports -----
 
+use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::error::Error;
 use std::hash::Hasher;
@@ -39,7 +40,7 @@ thread_local! {
 
 // ----- Errors -----
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum JError {
 	IncorrectRegionOrdering,
 	UnequalRegions,
@@ -145,9 +146,18 @@ impl<D> Clone for JMutex<D> {
 	}
 }
 
+impl<D> Debug for JMutex<D> {
+	fn fmt(&self, w: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+		w.debug_struct("JMutex")
+			.field("Region", &self.region().id())
+			.field("ID", &self.id())
+			.finish()
+	}
+}
+
 // ----- LocalRegion -----
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ActiveRegion {
 	region: Region,
 	prelocks: Vec<LockId>,
@@ -216,7 +226,7 @@ impl LocalRegions {
 
 		let ro = REGION_ORDERING.lock().unwrap();
 		// TODO: Check ordering
-		let result = ro.check_relation(current_active_region.region().id(), region.id());
+		let result = ro.check_relation(region.id(), current_active_region.region().id());
 		drop(ro);
 
 		match result {
@@ -254,18 +264,18 @@ impl LocalRegions {
 		}
 
 		let mut ro = REGION_ORDERING.lock().unwrap();
-		// TODO: Check ordering			
-		ro.insert(top_region_id, r.id());
+		// TODO: Check ordering	
+		ro.insert(r.id(), top_region_id);
 		drop(ro);
 
 		Ok(())
 	}
 
 	fn unlock_region(&mut self, r: &Region, lid: LockId) -> Result<(), JError> {
-		let mut iter = self.0.iter_mut();
-		let opt_ar = iter.find(|x| { x.region() == r });
+		let opt_ar = self.0.iter_mut().find(|x| { x.region() == r });
 
 		let mut removal = false;
+
 		match opt_ar {
 			Some(ar) => {
 				match ar.active_locks().iter().position(|x| { *x == lid }) {
@@ -276,7 +286,8 @@ impl LocalRegions {
 							removal = true;
 						}
 					}
-					_ => {}
+					_ => {
+					}
 				}
 			}
 
@@ -284,7 +295,7 @@ impl LocalRegions {
 		}
 
 		if removal {
-			match iter.position(|x| { x.region() == r }) {
+			match self.0.iter_mut().position(|x| { x.region().id() == r.id() }) {
 				Some(index) => {
 					self.0.swap_remove(index);
 				}
@@ -316,19 +327,22 @@ fn sync1<D1, C, R>(mut m1: JMutex<D1>, c: C) -> Result<R, JError>
 where
 	C: FnOnce(MutexGuard<D1>) -> R
 {
+	let tid = std::thread::current().id();
+
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
 	let lock_result = local_regions.lock_region(&rm1, m1.id());
-
+	
 	LOCAL_REGIONS.set(local_regions);
 
 	if lock_result.is_err() {
 		return Err(lock_result.unwrap_err());
 	}
 
+	println!("{:?} locked {:?}", tid, m1);
 	// Acquire first lock
 	let guard = m1.lock().unwrap();
 
@@ -352,6 +366,11 @@ where
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
+	let rm2 = m2.region();
+
+	if rm1 != rm2 {
+		return Err(JError::UnequalRegions);
+	}
 
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
@@ -393,6 +412,12 @@ where
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
+	let rm2 = m2.region();
+	let rm3 = m3.region();
+
+	if rm1 != rm2 || rm1 != rm3 {
+		return Err(JError::UnequalRegions);
+	}
 
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
@@ -475,6 +500,7 @@ mod tests {
         }
     }
 
+    // Works single
     #[test]
     fn dining_philosophers() {
     	let r = Region::new();
@@ -508,37 +534,9 @@ mod tests {
         }
     }
 
-    #[test]
-	fn test_deadlock_prevention() {
-		let r = Region::new();
-	    let mutex1 = JMutex::new(1, r.clone());
-	    let mutex2 = JMutex::new(2, r.clone());
-
-	    let m1_clone = mutex1.clone();
-	    let m2_clone = mutex2.clone();
-
-	    let handle1 = thread::spawn(move || {
-	        sync!([m1_clone, m2_clone], |_guard1, m2| {
-	            sync!([m2], |m2g| {
-	            	// Use locks
-	            });
-	        }).expect("Failed to acquire locks");
-	    });
-
-	    let handle2 = thread::spawn(move || {
-	        sync!([mutex2, mutex1], |guard2, m1| {
-	            sync!([m1], |m1g| {
-	            	// Use locks
-	            });
-	        }).expect("Failed to acquire locks");
-	    });
-
-	    handle1.join().expect("Thread 1 panicked");
-	    handle2.join().expect("Thread 2 panicked");
-	}
-
+	// Works single
 	#[test]
-	fn test_concurrent_access() {
+	fn concurrent_access() {
 		let r = Region::new();
 	    let shared_data = JMutex::new(vec![1, 2, 3], r);
 	    let mut handles = vec![];
@@ -558,24 +556,105 @@ mod tests {
 	    }
 	}
 
+	// Works single
 	#[test]
-	fn test_different_regions() {
+	fn same_regions() {
+		let r = Region::new();
+	    let mutex1 = JMutex::new(1, r.clone());
+	    let mutex2 = JMutex::new(2, r.clone());
+
+	    let m1_clone = mutex1.clone();
+	    let m2_clone = mutex2.clone();
+
+	    let handle1 = thread::spawn(move || {
+	        sync!([m1_clone, m2_clone], |guard1, m2| {
+	            sync!([m2], |m2g| {
+	            	// Use locks
+	            });
+	        }).expect("Failed to acquire locks");
+	    });
+
+	    let handle2 = thread::spawn(move || {
+	        sync!([mutex2, mutex1], |guard2, m1| {
+	            sync!([m1], |m1g| {
+	            	// Use locks
+	            });
+	        }).expect("Failed to acquire locks");
+	    });
+
+	    handle1.join().expect("Thread 1 panicked");
+	    handle2.join().expect("Thread 2 panicked");
+	}
+
+	#[test]
+	fn different_regions_single_threaded() {
+		let r1 = Region::new();
+		let r2 = Region::new();
+
+		let m1 = JMutex::new(1, r1);
+		let m2 = JMutex::new(2, r2);
+		let m1c = m1.clone();
+		let m2c = m2.clone();
+
+		let a = sync!([m1c], |g1| {
+			sync!([m2c], |g2| {
+				// Use locks
+			});
+		});
+
+		let b = sync!([m2], |g1| {
+			sync!([m1], |g2| {
+				// Use locks
+			});
+		});
+
+		if a.is_ok() {
+			assert_eq!(b.unwrap_err(), JError::IncorrectRegionOrdering);
+		} else if b.is_ok() {
+			assert_eq!(a.unwrap_err(), JError::IncorrectRegionOrdering);
+		}
+	}
+
+	#[test]
+	fn different_regions_multi_threaded() {
 		let r1 = Region::new();
 		let r2 = Region::new();
 
 		let m1 = JMutex::new(1, r1);
 		let m2 = JMutex::new(2, r2);
 
-		sync!([m1.clone(), m2.clone()], |g1, m2| {
-			sync!([m2], |g2| {
-				// Use locks
-			});
-		}).expect("Failed to sync");
+		let m1c = m1.clone();
+		let m2c = m2.clone();
 
-		sync!([m2, m1], |g2, m1| {
-			sync!([m1], |g1| {
-				// Use locks
-			});
-		}).expect("Failed to sync");
+		
+		let h1 = thread::spawn(move || {
+			sync!([m1c], |g1| {
+				println!("1. {:?}", std::thread::current().id());
+				sync!([m2c], |g2| {
+					println!("2. {:?}", std::thread::current().id());
+					// Use locks
+				});
+			})
+		});
+
+		let h2 = thread::spawn(move || {
+			sync!([m2], |g2| {
+				println!("2. {:?}", std::thread::current().id());
+				sync!([m1], |g1| {
+					println!("1. {:?}", std::thread::current().id());
+					// Use locks
+				});
+			})
+		});
+
+		let a = h1.join().unwrap();
+		let b = h2.join().unwrap();
+ 
+
+		if a.is_ok() {
+			assert_eq!(b.is_err(), true);
+		} else if a.is_err() {
+			assert_eq!(b.is_ok(), true);
+		}
 	}
 }
