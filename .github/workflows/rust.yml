@@ -21,4 +21,10 @@ jobs:
     - name: Build
       run: cargo build --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: |
+        cargo test dining_philosophers_same_region
+        cargo test dining_philosophers_different_region
+        cargo test concurrent_access
+        cargo test same_regions
+        cargo test different_regions_single_threaded
+        cargo test different_regions_multi_threaded

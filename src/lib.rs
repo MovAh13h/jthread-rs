@@ -2,6 +2,7 @@
 
 // ----- Imports -----
 
+use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::error::Error;
 use std::hash::Hasher;
@@ -39,7 +40,7 @@ thread_local! {
 
 // ----- Errors -----
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum JError {
 	IncorrectRegionOrdering,
 	UnequalRegions,
@@ -145,9 +146,18 @@ impl<D> Clone for JMutex<D> {
 	}
 }
 
+impl<D> Debug for JMutex<D> {
+	fn fmt(&self, w: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+		w.debug_struct("JMutex")
+			.field("Region", &self.region().id())
+			.field("ID", &self.id())
+			.finish()
+	}
+}
+
 // ----- LocalRegion -----
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ActiveRegion {
 	region: Region,
 	prelocks: Vec<LockId>,
@@ -207,13 +217,15 @@ impl LocalRegions {
 		Self(vec![ActiveRegion::new(&top)])
 	}
 
-	fn can_lock(&self, region: &Region) -> bool {
+	fn can_lock(&self, ro: &MutexGuard<Tord<u64>>, region: &Region) -> bool {
 		let current_active_region = self.0.last().unwrap();
 
-		let ro = REGION_ORDERING.lock().unwrap();
+		if current_active_region.region().id() == region.id() {
+			return true;
+		}
+
 		// TODO: Check ordering
-		let result = ro.check_relation(current_active_region.region().id(), region.id());
-		drop(ro);
+		let result = ro.check_relation(region.id(), current_active_region.region().id());
 
 		match result {
 			Some(b) => b,
@@ -222,7 +234,9 @@ impl LocalRegions {
 	}
 
 	fn lock_region(&mut self, r: &Region, lid: LockId) -> Result<(), JError> {
-		if !self.can_lock(r) {
+		let mut ro = REGION_ORDERING.lock().unwrap();
+
+		if !self.can_lock(&ro, r) {
 			return Err(JError::IncorrectRegionOrdering);
 		}
 
@@ -249,19 +263,19 @@ impl LocalRegions {
 			}
 		}
 
-		let mut ro = REGION_ORDERING.lock().unwrap();
-		// TODO: Check ordering			
-		ro.insert(top_region_id, r.id());
+		
+		// TODO: Check ordering	
+		ro.insert(r.id(), top_region_id);
 		drop(ro);
 
 		Ok(())
 	}
 
 	fn unlock_region(&mut self, r: &Region, lid: LockId) -> Result<(), JError> {
-		let mut iter = self.0.iter_mut();
-		let opt_ar = iter.find(|x| { x.region() == r });
+		let opt_ar = self.0.iter_mut().find(|x| { x.region() == r });
 
 		let mut removal = false;
+
 		match opt_ar {
 			Some(ar) => {
 				match ar.active_locks().iter().position(|x| { *x == lid }) {
@@ -272,7 +286,8 @@ impl LocalRegions {
 							removal = true;
 						}
 					}
-					_ => {}
+					_ => {
+					}
 				}
 			}
 
@@ -280,15 +295,11 @@ impl LocalRegions {
 		}
 
 		if removal {
-			match iter.position(|x| { x.region() == r }) {
+			match self.0.iter_mut().position(|x| { x.region().id() == r.id() }) {
 				Some(index) => {
-					println!("Index: {} | R: {:?}", index, r);
 					self.0.swap_remove(index);
 				}
-
-				None => {
-
-				}
+				_ => {}
 			}
 			
 		}
@@ -316,19 +327,22 @@ fn sync1<D1, C, R>(mut m1: JMutex<D1>, c: C) -> Result<R, JError>
 where
 	C: FnOnce(MutexGuard<D1>) -> R
 {
+	let tid = std::thread::current().id();
+
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
 	let lock_result = local_regions.lock_region(&rm1, m1.id());
-
+	
 	LOCAL_REGIONS.set(local_regions);
 
 	if lock_result.is_err() {
 		return Err(lock_result.unwrap_err());
 	}
 
+	println!("{:?} locked {:?}", tid, m1);
 	// Acquire first lock
 	let guard = m1.lock().unwrap();
 
@@ -385,7 +399,6 @@ where
 	let mut local_regions = lr.take();
 	let lock_result = local_regions.unlock_region(&rm1, m1.id());
 	LOCAL_REGIONS.set(local_regions);
-
 
 	Ok(result)
 }
@@ -468,25 +481,60 @@ mod tests {
         }
 
         // Function for philosopher to eat
-        fn eat(&self) {
+        fn eat_same(&self) {
             println!("{} is thinking.", self.name);
 
-            sync!([self.left_fork.clone(), self.right_fork.clone()], |left_fork_guard, right_fork_guard| {
-                println!("{} is eating.", self.name);
+            sync!([self.left_fork.clone(), self.right_fork.clone()], |left_fork_guard, r| {
+            	sync!([r], |g| {
+            		println!("{} is eating.", self.name);
 
-                // Simulate eating
-                thread::sleep(std::time::Duration::from_secs(1));
+	                // Simulate eating
+	                thread::sleep(std::time::Duration::from_secs(1));
 
-                println!("{} has finished eating.", self.name);
+	                println!("{} has finished eating.", self.name);
+            	});                
             }).expect("Failed to acquire forks");
 
             println!("{} is thinking again.", self.name);
         }
+
+        // Function for philosopher to eat
+        fn eat_different(&self) {
+        	let tid = std::thread::current().id();
+            println!("{} is thinking.", self.name);
+
+            let l = sync!([self.left_fork.clone()], |left_fork_guard| {
+            	let r = sync!([self.right_fork.clone()], |right_fork_guard| {
+            		println!("{} is eating.", self.name);
+
+	                // Simulate eating
+	                thread::sleep(std::time::Duration::from_secs(1));
+
+	                println!("{} has finished eating.", self.name);
+            	});
+
+            	match r {
+            		Ok(o) => return Ok(o),
+            		Err(e) => return Err(e),
+            	}
+            });
+
+            match l {
+            	Ok(o) => {
+            		println!("{} is thinking again.", self.name);		
+            	}
+
+            	Err(e) => {
+            		println!("{}[{:?}] faced error: {:?}", self.name, tid, e);	
+            	}
+            }
+
+            
+        }
     }
 
     #[test]
-    fn dining_philosophers() {
-
+    fn dining_philosophers_same_region() {
     	let r = Region::new();
 
         // Initialize forks
@@ -508,7 +556,7 @@ mod tests {
         // Create threads for each philosopher to eat
         let handles: Vec<_> = philosophers.into_iter().map(|philosopher| {
             thread::spawn(move || {
-                philosopher.eat();
+                philosopher.eat_same();
             })
         }).collect();
 
@@ -517,4 +565,172 @@ mod tests {
             handle.join().expect("Philosopher thread panicked");
         }
     }
+
+    #[test]
+    fn dining_philosophers_different_region() {
+    	let r1 = Region::new();
+    	let r2 = Region::new();
+    	let r3 = Region::new();
+    	let r4 = Region::new();
+
+        // Initialize forks
+        let forks = vec![
+            JMutex::new(Fork(1), r1),
+            JMutex::new(Fork(2), r2),
+            JMutex::new(Fork(3), r3),
+            JMutex::new(Fork(4), r4),
+        ];
+
+        // Initialize dining_philosophers
+        let philosophers = vec![
+            Philosopher::new(forks[0].clone(), forks[1].clone(), "Philosopher 1".to_string()),
+            Philosopher::new(forks[1].clone(), forks[2].clone(), "Philosopher 2".to_string()),
+            Philosopher::new(forks[2].clone(), forks[3].clone(), "Philosopher 3".to_string()),
+            Philosopher::new(forks[3].clone(), forks[0].clone(), "Philosopher 4".to_string()),
+        ];
+
+        // Create threads for each philosopher to eat
+        let handles: Vec<_> = philosophers.into_iter().map(|philosopher| {
+            thread::spawn(move || {
+                philosopher.eat_different();
+            })
+        }).collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+        	let tid = handle.thread().id();
+            match handle.join() {
+            	Ok(_) => {
+            		
+            		println!("{:?} exited without any errors", tid);
+            	}
+
+            	Err(e) => {
+					println!("{:?} threw error: {:?}", tid, e);
+            	}
+            }
+        }
+    }
+
+	#[test]
+	fn concurrent_access() {
+		let r = Region::new();
+	    let shared_data = JMutex::new(vec![1, 2, 3], r);
+	    let mut handles = vec![];
+
+	    for _ in 0..10 {
+	        let data_clone = shared_data.clone();
+	        handles.push(thread::spawn(move || {
+	            let result = sync!([data_clone], |guard| {
+	                guard.iter().sum::<i32>()
+	            });
+	            assert_eq!(result.expect("Failed to lock"), 6);
+	        }));
+	    }
+
+	    for handle in handles {
+	        handle.join().expect("Thread panicked");
+	    }
+	}
+
+	#[test]
+	fn same_regions() {
+		let r = Region::new();
+	    let mutex1 = JMutex::new(1, r.clone());
+	    let mutex2 = JMutex::new(2, r.clone());
+
+	    let m1_clone = mutex1.clone();
+	    let m2_clone = mutex2.clone();
+
+	    let handle1 = thread::spawn(move || {
+	        sync!([m1_clone, m2_clone], |guard1, m2| {
+	            sync!([m2], |m2g| {
+	            	// Use locks
+	            });
+	        }).expect("Failed to acquire locks");
+	    });
+
+	    let handle2 = thread::spawn(move || {
+	        sync!([mutex2, mutex1], |guard2, m1| {
+	            sync!([m1], |m1g| {
+	            	// Use locks
+	            });
+	        }).expect("Failed to acquire locks");
+	    });
+
+	    handle1.join().expect("Thread 1 panicked");
+	    handle2.join().expect("Thread 2 panicked");
+	}
+
+	#[test]
+	fn different_regions_single_threaded() {
+		let r1 = Region::new();
+		let r2 = Region::new();
+
+		let m1 = JMutex::new(1, r1);
+		let m2 = JMutex::new(2, r2);
+		let m1c = m1.clone();
+		let m2c = m2.clone();
+
+		let a = sync!([m1c], |g1| {
+			sync!([m2c], |g2| {
+				// Use locks
+			});
+		});
+
+		let b = sync!([m2], |g1| {
+			sync!([m1], |g2| {
+				// Use locks
+			});
+		});
+
+		if a.is_ok() {
+			assert_eq!(b.unwrap_err(), JError::IncorrectRegionOrdering);
+		} else if b.is_ok() {
+			assert_eq!(a.unwrap_err(), JError::IncorrectRegionOrdering);
+		}
+	}
+
+	#[test]
+	fn different_regions_multi_threaded() {
+		let r1 = Region::new();
+		let r2 = Region::new();
+
+		let m1 = JMutex::new(1, r1);
+		let m2 = JMutex::new(2, r2);
+
+		let m1c = m1.clone();
+		let m2c = m2.clone();
+
+		
+		let h1 = thread::spawn(move || {
+			sync!([m1c], |g1| {
+				println!("1. {:?}", std::thread::current().id());
+				sync!([m2c], |g2| {
+					println!("2. {:?}", std::thread::current().id());
+					// Use locks
+				});
+			})
+		});
+
+		let h2 = thread::spawn(move || {
+			sync!([m2], |g2| {
+				println!("2. {:?}", std::thread::current().id());
+				sync!([m1], |g1| {
+					println!("1. {:?}", std::thread::current().id());
+					// Use locks
+				});
+			})
+		});
+
+		let a = h1.join().unwrap();
+		let b = h2.join().unwrap();
+ 
+
+		if a.is_ok() {
+			assert_eq!(b.is_err(), true);
+		} else if a.is_err() {
+			assert_eq!(b.is_ok(), true);
+		}
+	}
 }
