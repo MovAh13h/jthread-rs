@@ -592,40 +592,6 @@ mod tests {
             	}
             }            
         }
-
-        // Function for philosopher to eat
-        fn eat_different(&self) {
-        	let tid = std::thread::current().id();
-            println!("{} is thinking.", self.name);
-
-            let l = sync!([self.left_fork.clone()], |left_fork_guard| {
-            	let r = sync!([self.right_fork.clone()], |right_fork_guard| {
-            		println!("{} is eating.", self.name);
-
-	                // Simulate eating
-	                thread::sleep(std::time::Duration::from_secs(1));
-
-	                println!("{} has finished eating.", self.name);
-            	});
-
-            	match r {
-            		Ok(o) => return Ok(o),
-            		Err(e) => return Err(e),
-            	}
-            });
-
-            match l {
-            	Ok(o) => {
-            		println!("{} is thinking again.", self.name);		
-            	}
-
-            	Err(e) => {
-            		println!("{}[{:?}] faced error: {:?}", self.name, tid, e);	
-            	}
-            }
-
-            
-        }
     }
 
     #[test]
