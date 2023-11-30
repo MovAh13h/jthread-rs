@@ -221,7 +221,7 @@ impl LocalRegions {
 		let top = Region{ 0: RegionId::MAX };  
 		Self(vec![ActiveRegion::new(&top)])
 	}
-
+  
 	// fn can_lock(&self, ro: &MutexGuard<DirectedGraph<RegionId>>, region: &Region) -> Option<bool> {
 	// 	let current_active_region = self.0.last().unwrap();
 
@@ -238,7 +238,7 @@ impl LocalRegions {
 		let top_region_id = top_region.region().id();
 
 		let mut ro = REGION_ORDERING.lock().unwrap();
-
+ 
 		if top_region_id == r.id() {
 			return Ok(());
 		}
@@ -364,20 +364,21 @@ fn sync1<D1, C, R>(mut m1: JMutex<D1>, c: C) -> Result<R, JError>
 where
 	C: FnOnce(MutexGuard<D1>) -> R
 {
+	let tid = std::thread::current().id();
+
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
 	let rm1 = m1.region();
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
+  
 	let lock_result = local_regions.lock_region(&rm1, m1.id(), &[]);
-
 	LOCAL_REGIONS.set(local_regions);
 
 	if lock_result.is_err() {
 		return Err(lock_result.unwrap_err());
 	}
 
-	
 	// Acquire first lock
 	let lid = m1.id();
 	let guard = m1.lock().unwrap();
@@ -560,6 +561,7 @@ mod tests {
             }
         }
 
+
         // Function for philosopher to eat
         fn eat_different(&self) {
             println!("{:?} is thinking with locks (L:{}|R:{}) and (L:{}|R:{})", tid(), self.left_fork.id(), self.left_fork.region().id(), self.right_fork.id(), self.right_fork.region().id());
@@ -589,6 +591,40 @@ mod tests {
             		println!("{:?} faced error: {:?}", tid(), e);	
             	}
             }            
+        }
+
+        // Function for philosopher to eat
+        fn eat_different(&self) {
+        	let tid = std::thread::current().id();
+            println!("{} is thinking.", self.name);
+
+            let l = sync!([self.left_fork.clone()], |left_fork_guard| {
+            	let r = sync!([self.right_fork.clone()], |right_fork_guard| {
+            		println!("{} is eating.", self.name);
+
+	                // Simulate eating
+	                thread::sleep(std::time::Duration::from_secs(1));
+
+	                println!("{} has finished eating.", self.name);
+            	});
+
+            	match r {
+            		Ok(o) => return Ok(o),
+            		Err(e) => return Err(e),
+            	}
+            });
+
+            match l {
+            	Ok(o) => {
+            		println!("{} is thinking again.", self.name);		
+            	}
+
+            	Err(e) => {
+            		println!("{}[{:?}] faced error: {:?}", self.name, tid, e);	
+            	}
+            }
+
+            
         }
     }
 
@@ -665,6 +701,7 @@ mod tests {
 
             	Err(e) => {
             		println!("{:?} threw error: {:?}", tid, e);
+
             	}
             }
         }
@@ -799,5 +836,6 @@ mod tests {
  
  		assert_eq!(a.is_ok(), true);
  		assert_eq!(b.is_ok(), true);
+
 	}
 }
