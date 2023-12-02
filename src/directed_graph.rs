@@ -1,20 +1,18 @@
 use std::fmt::Debug;
-use std::collections::VecDeque;
+
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::collections::{HashMap, HashSet};
-use std::println;
+
 
 #[derive(Debug, PartialEq)]
 pub enum DGError {
-    NodeDoesNotExist,
     EdgeCreatesCycle,
 }
 
 impl std::fmt::Display for DGError {
     fn fmt(&self, w: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            DGError::NodeDoesNotExist => w.write_str("Node does not exist"),
             DGError::EdgeCreatesCycle => w.write_str("Edge creates cycle"),
         }
     }
