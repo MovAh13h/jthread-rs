@@ -475,7 +475,7 @@ mod tests {
         }
 
         // Function for philosopher to eat
-        fn eat_same(&self) {
+        fn eat_same(&self) -> Result<(), JError> {
             println!("{:?} is thinking with locks {} and {}", tid(), self.left_fork.id(), self.right_fork.id());
 
             let l = sync!([self.left_fork.clone(), self.right_fork.clone()], |_left_guard, r| {
@@ -502,12 +502,22 @@ mod tests {
             });
 
             match l {
-            	Ok(_) => {
-            		println!("{:?} is thinking again.", tid());
+            	Ok(ll) => {
+            		match ll {
+            			Ok(()) => {
+            				println!("{:?} is thinking again.", tid());
+            				return Ok(());
+            			}
+            			Err(e) => {
+            				println!("{:?} faced error: {:?}", tid(), e);
+            				return Err(e);
+            			}
+            		}
             	}
 
             	Err(e) => {
             		println!("{:?} faced error: {:?}", tid(), e);
+            		return Err(e);
             	}
             }
         }
@@ -576,14 +586,37 @@ mod tests {
         // Create threads for each philosopher to eat
         let handles: Vec<_> = philosophers.into_iter().map(|philosopher| {
             thread::spawn(move || {
-                philosopher.eat_same();
+                philosopher.eat_same()
             })
         }).collect();
 
-        // Wait for all threads to complete
-        for handle in handles {
-            handle.join().expect("Philosopher thread panicked");
-        }
+        let results: Vec<_> = handles
+        						.into_iter()
+        						.map(|handle| (handle.thread().id(), handle.join()))
+        						.collect();
+
+        let mut one_fail = false;
+        results.iter().for_each(|(tid, result)| {
+        	match result {
+        		Ok(rr) => {
+        			match rr {
+        				Ok(_) => {
+        					println!("{:?} existed successfully", tid);
+        				},
+
+        				Err(e) => {
+        					println!("{:?} exited with error: {:?}", tid, e);
+        					one_fail = true;
+        				}
+        			}
+        		},
+        		Err(e) => {
+        			println!("{:?} exited with error: {:?}", tid, e);
+        		},
+        	}
+        });
+
+        assert_eq!(one_fail, false);
     }
 
     #[test]
