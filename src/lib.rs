@@ -5,9 +5,7 @@ mod directed_graph;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 
-use std::sync::Condvar;
 use std::sync::{Arc, LockResult, Mutex, MutexGuard};
-use std::thread::ThreadId;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::cell::RefCell;
 
@@ -87,7 +85,6 @@ pub struct JMutex<D> {
 	inner: Arc<Mutex<D>>,
 	lid: LockId,
 	region: Region,
-	cvar: Arc<Condvar>,
 }
 
 impl<D> JMutex<D> {
@@ -96,7 +93,6 @@ impl<D> JMutex<D> {
 			inner: Arc::new(Mutex::new(data)),
 			region,
 			lid: Self::generate_lock_id(),
-			cvar: Arc::new(Condvar::new())
 		}
 	}
 
@@ -105,7 +101,6 @@ impl<D> JMutex<D> {
 			inner: Arc::new(Mutex::new(data)),
 			region: Region::new(),
 			lid: Self::generate_lock_id(),
-			cvar: Arc::new(Condvar::new())
 		}
 	}
 
@@ -123,15 +118,15 @@ impl<D> JMutex<D> {
 
 	fn prelock(&mut self) -> Result<(), JError> {
 		match self.inner.lock() {
-			Ok(g) => Ok(()),
-			Err(e) => Err(JError::PoisonedMutex)
+			Ok(_) => Ok(()),
+			Err(_) => Err(JError::PoisonedMutex)
 		}
 	}
 
 	fn generate_lock_id() -> LockId {
-		let result = LOCK_ID.load(Ordering::SeqCst).into();
+		let result = LOCK_ID.load(Ordering::Relaxed).into();
 
-		LOCK_ID.fetch_add(1, Ordering::SeqCst);
+		LOCK_ID.fetch_add(1, Ordering::Relaxed);
 
 		result
 	}
@@ -143,7 +138,6 @@ impl<D> Clone for JMutex<D> {
 			inner: Arc::clone(&self.inner),
 			region: self.region().clone(),
 			lid: self.id().clone(),
-			cvar: Arc::clone(&self.cvar)
 		}
 	}
 }
@@ -181,10 +175,6 @@ impl ActiveRegion {
 
 	fn prelocks(&self) -> &Vec<LockId> {
 		&self.prelocks
-	}
-
-	fn prelocks_mut(&mut self) -> &mut Vec<LockId> {
-		&mut self.prelocks
 	}
 
 	fn active_locks(&self) -> &Vec<LockId> {
@@ -315,9 +305,9 @@ macro_rules! sync {
     };
 }
 
-fn sync1<D1, C, R>(mut m1: JMutex<D1>, c: C) -> Result<R, JError>
+pub fn sync1<D1, C, R>(mut m1: JMutex<D1>, c: C) -> Result<R, JError>
 where
-	C: FnOnce(MutexGuard<D1>) -> R, R: std::fmt::Debug
+	C: FnOnce(MutexGuard<D1>) -> R
 {
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
@@ -334,7 +324,6 @@ where
 	}
 
 	// Acquire first lock
-	let lid = m1.id();
 	let guard = m1.lock().unwrap();
 
 	// Call the closure
@@ -343,16 +332,16 @@ where
 	// Unlock the region
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
-	let lock_result = local_regions.unlock_region(&rm1, m1.id());
+	let _ = local_regions.unlock_region(&rm1, m1.id());
 	LOCAL_REGIONS.set(local_regions);
 
 	Ok(result)
 }
 
-fn sync2<D1, D2, C, R>(mut m1: JMutex<D1>, mut m2: JMutex<D2>, c: C)
+pub fn sync2<D1, D2, C, R>(mut m1: JMutex<D1>, mut m2: JMutex<D2>, c: C)
 	-> Result<R, JError>
 where
-	C: FnOnce(MutexGuard<D1>, JMutex<D2>) -> R, R: std::fmt::Debug
+	C: FnOnce(MutexGuard<D1>, JMutex<D2>) -> R
 {
 	// Region Check
 	// Additionally, lock the region ie. push the region on the stack
@@ -378,7 +367,6 @@ where
 	}
 
 	// Acquire first lock
-	let lid = m1.id();
 	let guard = m1.lock().unwrap();
 
 	// Call the closure
@@ -387,13 +375,13 @@ where
 	// Unlock the region
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
-	let lock_result = local_regions.unlock_region(&rm1, m1.id());
+	let _ = local_regions.unlock_region(&rm1, m1.id());
 	LOCAL_REGIONS.set(local_regions);
 
 	Ok(result)
 }
 
-fn sync3<D1, D2, D3, C, R>(mut m1: JMutex<D1>, mut m2: JMutex<D2>, mut m3: JMutex<D3>, c: C)
+pub fn sync3<D1, D2, D3, C, R>(mut m1: JMutex<D1>, mut m2: JMutex<D2>, mut m3: JMutex<D3>, c: C)
 	-> Result<R, JError>
 where
 	C: FnOnce(MutexGuard<D1>, JMutex<D2>, JMutex<D3>) -> R
@@ -438,22 +426,21 @@ where
 	// Unlock the region
 	let lr: RefCell<LocalRegions> = LOCAL_REGIONS.take().into();
 	let mut local_regions = lr.take();
-	let _lock_result = local_regions.unlock_region(&rm1, m1.id());
+	let _ = local_regions.unlock_region(&rm1, m1.id());
 	LOCAL_REGIONS.set(local_regions);
 
 
 	Ok(result)
 }
 
-fn tid() -> ThreadId {
-	std::thread::current().id()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
-    use std::{thread, time::Duration, assert_eq};
+	use super::*;
+    use std::{thread::{self, ThreadId}, time::Duration, assert_eq};
+
+    fn tid() -> ThreadId {
+		std::thread::current().id()
+	}
 
     // Define a Fork as a simple integer
     #[derive(Debug)]
@@ -569,10 +556,10 @@ mod tests {
 
         // Initialize forks
         let forks = vec![
+            JMutex::new(Fork(0), r.clone()),
             JMutex::new(Fork(1), r.clone()),
             JMutex::new(Fork(2), r.clone()),
             JMutex::new(Fork(3), r.clone()),
-            JMutex::new(Fork(4), r.clone()),
         ];
 
         // Initialize dining_philosophers
@@ -628,10 +615,10 @@ mod tests {
 
         // Initialize forks
         let forks = vec![
-            JMutex::new(Fork(1), r1),
-            JMutex::new(Fork(2), r2),
-            JMutex::new(Fork(3), r3),
-            JMutex::new(Fork(4), r4),
+            JMutex::new(Fork(0), r1),
+            JMutex::new(Fork(1), r2),
+            JMutex::new(Fork(2), r3),
+            JMutex::new(Fork(3), r4),
         ];
 
         // Initialize dining_philosophers
@@ -720,10 +707,7 @@ mod tests {
 	            	// Use locks
 	            });
 
-	            match i {
-            		Ok(o) => return Ok(o),
-            		Err(e) => return Err(e),
-            	}
+	            return i;
 	        });
 
 	        match o {
@@ -741,10 +725,7 @@ mod tests {
 	            	// Use locks
 	            });
 
-	            match i {
-            		Ok(o) => return Ok(o),
-            		Err(e) => return Err(e),
-            	}
+	            return i;
 	        });
 
 	        match o {
@@ -776,20 +757,12 @@ mod tests {
 			thread::sleep(Duration::from_millis(100));
 			let l = sync!([m1c], |_g1| {
 				thread::sleep(Duration::from_millis(100));
-				println!("1. {:?}", std::thread::current().id());
 				let r = sync!([m2c], |_g2| {
 					thread::sleep(Duration::from_millis(100));
-					println!("2. {:?}", std::thread::current().id());
 					// Use locks
 				});
 
-				if r.is_ok() {
-					println!("{:?} R OK", tid());
-					return Ok(());
-				} else {
-					println!("{:?} R Error", tid());
-					return Err(r.unwrap_err());
-				}
+				return r;
 			});
 
 			match l {
@@ -805,22 +778,15 @@ mod tests {
 
 		let h2 = thread::spawn(move || {
 			thread::sleep(Duration::from_millis(100));
+			
 			let l = sync!([m2], |_g2| {
 				thread::sleep(Duration::from_millis(100));
-				println!("2. {:?}", std::thread::current().id());
 				let r = sync!([m1], |_g1| {
 					thread::sleep(Duration::from_millis(100));
-					println!("1. {:?}", std::thread::current().id());
 					// Use locks
 				});
 
-				if r.is_ok() {
-					println!("{:?} R OK", tid());
-					return Ok(());
-				} else {
-					println!("{:?} R Error", tid());
-					return Err(r.unwrap_err());
-				}
+				return r;
 			});
 
 			match l {
@@ -837,23 +803,10 @@ mod tests {
 		let a = h1.join().unwrap();
 		let b = h2.join().unwrap();
  
- 		
-		match (a, b) {
-			(Ok(_), Err(e)) => {
-				println!("Thread B exited with error: {:?}", e);
-			},
-
-			(Err(e), Ok(_)) => {
-				println!("Thread A exited with error: {:?}", e);
-			},
-
-			(Ok(_), Ok(_)) => {
-				println!("Both threads exited successfully");
-			}
-
-			(Err(e1), Err(e2)) => {
-				println!("Both threads exited with errors: {:?} {:?}", e1, e2);
-			}
+		if a.is_ok() {
+			assert_eq!(b.is_err(), true);
+		} else if b.is_ok() {
+			assert_eq!(a.is_err(), true);
 		}
 	}
 }
