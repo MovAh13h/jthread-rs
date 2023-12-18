@@ -18,36 +18,18 @@ impl std::fmt::Display for DGError {
     }
 }
 
- 
-
-// The graph should support the following operations:
-// - add_node(node)
-// - add_edge(src, dst)
-// - contains(node) -> bool
-// - is_reachable(src, dst) -> bool
-
-// add_edge should return an error if the edge creates a cycle
-
-// You may use any data structures you like, but you may not use any graph
-// libraries or external crates. You may also assume that the node type
-// implements Eq, Hash, Debug, and Clone.
-
-// You may write additional functions, structs, or traits to help you solve the
-// problem. Please include these in your solution.
-
-
-pub (crate) struct DirectedGraph<T> {
+pub struct DirectedGraph<T> {
     adj_list: HashMap<T, Vec<T>>,
 }
 
 impl<T: Hash + PartialEq + Eq + Clone> DirectedGraph<T> {
-    pub (crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             adj_list: HashMap::new(),
         }
     }
 
-    pub (crate) fn add_edge_with_check(&mut self, src: T, dest: T) -> Result<(), DGError> {
+    pub fn add_edge_with_check(&mut self, src: T, dest: T) -> Result<(), DGError> {
         // Temporarily add the edge
         self.adj_list.entry(src.clone()).or_insert(vec![]).push(dest.clone());
 
@@ -64,7 +46,7 @@ impl<T: Hash + PartialEq + Eq + Clone> DirectedGraph<T> {
     }
 
     // Method to check if the graph is cyclic
-    pub (crate) fn is_cyclic(&self) -> bool {
+    fn is_cyclic(&self) -> bool {
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
 
@@ -76,7 +58,7 @@ impl<T: Hash + PartialEq + Eq + Clone> DirectedGraph<T> {
         false
     }
 
-    pub (crate) fn is_cyclic_util(&self, node: &T, visited: &mut HashSet<T>, rec_stack: &mut HashSet<T>) -> bool {
+    fn is_cyclic_util(&self, node: &T, visited: &mut HashSet<T>, rec_stack: &mut HashSet<T>) -> bool {
         if rec_stack.contains(&node) {
             return true;
         }

@@ -1,5 +1,5 @@
 [package]
-name = "initial_setup"
+name = "jthread"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,10 @@ edition = "2021"
 
 [dependencies]
 lazy_static = "1.4.0"
-tord = "0.1.7"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "bench"
+harness = false
