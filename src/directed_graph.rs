@@ -1,9 +1,8 @@
 use std::fmt::Debug;
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::hash::Hash;
-use std::collections::{HashMap, HashSet};
-
 
 #[derive(Debug, PartialEq)]
 pub enum DGError {
@@ -31,7 +30,10 @@ impl<T: Hash + PartialEq + Eq + Clone> DirectedGraph<T> {
 
     pub fn add_edge_with_check(&mut self, src: T, dest: T) -> Result<(), DGError> {
         // Temporarily add the edge
-        self.adj_list.entry(src.clone()).or_insert(vec![]).push(dest.clone());
+        self.adj_list
+            .entry(src.clone())
+            .or_insert(vec![])
+            .push(dest.clone());
 
         if self.is_cyclic() {
             // If a cycle is detected, remove the edge and return an error
@@ -58,7 +60,12 @@ impl<T: Hash + PartialEq + Eq + Clone> DirectedGraph<T> {
         false
     }
 
-    fn is_cyclic_util(&self, node: &T, visited: &mut HashSet<T>, rec_stack: &mut HashSet<T>) -> bool {
+    fn is_cyclic_util(
+        &self,
+        node: &T,
+        visited: &mut HashSet<T>,
+        rec_stack: &mut HashSet<T>,
+    ) -> bool {
         if rec_stack.contains(&node) {
             return true;
         }

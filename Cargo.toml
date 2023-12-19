@@ -2,6 +2,12 @@
 name = "jthread"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/MovAh13h/jthread-rs"
+documentation = "https://docs.rs/jthread"
+readme = "README.md"
+license-file = "LICENSE"
+description = "Deadlock-free Mutual Exclusion locks for Rust"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
