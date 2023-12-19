@@ -377,28 +377,13 @@ impl LocalRegions {
 /// use jthread::*;
 ///
 /// let data_mutex = JMutex::with_default(5); // Protecting an integer
-/// let result = sync!([data_mutex], |data_guard| {
+/// let result = sync!([data_mutex], |mut data_guard| {
 ///     *data_guard += 1; // Modify the data
 ///     *data_guard
 /// });
 /// // result now holds the modified value
 /// ```
-///
-/// Using three mutexes:
-/// ```
-/// use jthread::*;
-///
-/// let mutex1 = JMutex::with_default(5);
-/// let mutex2 = JMutex::with_default("Hello");
-/// let mutex3 = JMutex::with_default(vec![1, 2, 3]);
-///
-/// sync!([mutex1, mutex2, mutex3], |data_guard1, data_guard2, data_guard3| {
-///     *data_guard1 += 1; // Modify the first data
-///     println!("{}, world!", *data_guard2); // Use the second data
-///     data_guard3.push(4); // Modify the vector
-/// });
-/// ```
-///
+/// ///
 /// # Notes
 /// - The macro is designed to ensure that locks are acquired in a consistent order, preventing deadlocks.
 /// - Make sure that the closures do not panic, as this might lead to lock poisoning.
