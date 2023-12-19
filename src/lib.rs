@@ -12,7 +12,6 @@ mod directed_graph;
 ///
 /// ## Examples
 /// Basic usage of the library can be found in the `tests` module. It demonstrates how to create regions, mutexes, and handle errors.
-
 // ----- Imports -----
 use std::fmt::Debug;
 use std::fmt::Formatter;
@@ -111,7 +110,6 @@ impl Region {
 
 // ----- JMutex -----
 
-
 /// A region-aware mutex wrapper.
 ///
 /// `JMutex` wraps a standard mutex, providing region-based locking
@@ -134,9 +132,9 @@ pub struct JMutex<D> {
 }
 
 impl<D> JMutex<D> {
-	/// Constructs a new `JMutex` with the provided data and region.
+    /// Constructs a new `JMutex` with the provided data and region.
     ///
-    /// This method creates a new `JMutex` instance which includes an atomic lock ID, a region, 
+    /// This method creates a new `JMutex` instance which includes an atomic lock ID, a region,
     /// and the data to be protected by the mutex.
     ///
     /// # Arguments
@@ -376,7 +374,7 @@ impl LocalRegions {
 /// # Examples
 /// Basic usage with a single mutex:
 /// ```
-/// use jthread::{JMutex, sync, Region};
+/// use jthread::*;
 ///
 /// let data_mutex = JMutex::with_default(5); // Protecting an integer
 /// let result = sync!([data_mutex], |data_guard| {
@@ -388,7 +386,7 @@ impl LocalRegions {
 ///
 /// Using three mutexes:
 /// ```
-/// use jthread::{JMutex, sync, Region};
+/// use jthread::*;
 ///
 /// let mutex1 = JMutex::with_default(5);
 /// let mutex2 = JMutex::with_default("Hello");
